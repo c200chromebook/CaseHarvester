@@ -76,11 +76,9 @@ class CaseDetailsParser(ABC):
 
     def delete_previous(self, db, case_table_class):
         # Disable foreign key on delete cascade triggers for performance
-        db.execute('SET session_replication_role = replica')
         for cls_name, cls in inspect.getmembers(inspect.getmodule(self), lambda obj: hasattr(obj, '__tablename__')):
             db.execute(cls.__table__.delete()\
             .where(cls.case_number == self.case_number))
-        db.execute('SET session_replication_role = DEFAULT')
 
     def immediate_previous_sibling(self, next_sibling, *args, **kwargs):
         obj_prev = next_sibling.find_previous_sibling(True)

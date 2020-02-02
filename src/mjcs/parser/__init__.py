@@ -34,14 +34,14 @@ def parse_case_from_html(case_number, detail_loc, html):
             return parser(case_number, html).parse()
     raise NotImplementedError('Unsupported case type: %s' % detail_loc)
 
-def parse_case(case):
+def parse_case(case,casebucket):
     case_number = case['case_number'] if type(case) == dict else case
     # check if parse_exempt before scraping
     with db_session() as db:
         if db.query(Case.parse_exempt).filter(Case.case_number == case_number).scalar() == True:
             return
-    case_details = config.case_details_bucket.Object(case_number).get()
-    case_html = case_details['Body'].read().decode('utf-8')
+    case_details = casebucket[case_number]
+    case_html = case_details['Body']
     try:
         detail_loc = case_details['Metadata']['detail_loc']
     except KeyError:
@@ -68,12 +68,13 @@ def invoke_parser_lambda(detail_loc=None):
                 time.sleep( AVERAGE_PARSER_DURATION / ( CONCURRENCY_AVAILABLE * CONCURRENCY_RATIO ) ) # so lambda doesn't get throttled
 
 class Parser:
-    def __init__(self, on_error=None, threads=1):
+    def __init__(self, on_error=None, threads=1, casebucket=None):
         self.on_error = on_error
         self.threads = threads
+        self.casebucket = casebucket
 
-    def parse_case(self, case_number):
-        return parse_case(case_number)
+    def parse_case(self, case_number,casebucket):
+        return parse_case(case_number,casebucket)
 
     def parse_unparsed_cases(self, detail_loc=None):
         if detail_loc:
@@ -97,7 +98,7 @@ class Parser:
                 print('Fetching batch of cases from database...',end='',flush=True)
                 case_numbers = [c for c, in db.query(Case.case_number).filter(batch_filter)]
                 print('Done.')
-            process_cases(parse_case, case_numbers, None, self.on_error, self.threads, counter)
+            process_cases(lambda x: parse_case(x, self.casebucket), case_numbers, None, self.on_error, self.threads, counter)
 
     def parse_failed_queue(self, detail_loc=None):
         counter = {

@@ -44,9 +44,9 @@ def split_date_range(start_date, end_date):
 
 class SearchItem(BaseSearchItem):
     def __init__(self, search_string, start_date, end_date=None, court=None, status=SearchItemStatus.new):
-        id = search_string + start_date.strftime("%-m/%-d/%Y")
+        id = search_string + start_date.strftime("%m/%d/%Y")
         if end_date:
-            id += end_date.strftime("%-m/%-d/%Y")
+            id += end_date.strftime("%m/%d/%Y")
         if court:
             id += court
         super().__init__(

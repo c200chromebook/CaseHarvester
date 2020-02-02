@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import shelve
 from mjcs.config import config
 from mjcs.models import Case
 from mjcs.models.common import TableBase
@@ -25,11 +26,15 @@ def get_export_val(exports, env_short, export_name):
     raise Exception('Unable to find %s in AWS Cloudformation exports' % export_name)
 
 def run_db_init(args):
-    exports = get_stack_exports()
-    db_hostname = get_export_val(exports, args.environment_short, 'DatabaseHostname')
-    if not db_hostname:
-        raise Exception('Unable to find database hostname in AWS cloudformation exports')
     secrets = json.loads(args.secrets_file.read())
+    if args.profile:
+        exports = get_stack_exports()
+        db_hostname = get_export_val(exports, args.environment_short, 'DatabaseHostname')
+        if not db_hostname:
+            raise Exception('Unable to find database hostname in AWS cloudformation exports')
+    else:
+        db_hostname = secrets[args.environment]['DatabaseHostname']
+        exports = [{'Name': [args.environment_short+'-DatabaseHostname',args.environment+'-DatabaseHostname'], 'Value': db_hostname}]
     db_username = secrets[args.environment]['DatabaseUsername']
     db_password = secrets[args.environment]['DatabasePassword']
     db_master_username = secrets[args.environment]['DatabaseMasterUsername']
@@ -62,7 +67,7 @@ def create_database_and_user(db_hostname, db_name, master_username,
     print("Creating user",username)
     conn.execute(text("create user %s with password :pw" % username), pw=password)
     conn.execute("grant all privileges on database %s to %s" % (db_name,username))
-    conn.execute("grant rds_superuser to %s" % (username))
+    # conn.execute("grant rds_superuser to %s" % (username))
     conn.execute(text("create user %s with password :pw" % ro_username), pw=ro_password)
     conn.close()
 
@@ -79,7 +84,7 @@ def write_env_file(env_long, env_short, exports, db_name, username, password):
     print("Writing env file",env_file_path)
     with open(env_file_path, 'w') as f:
         f.write('%s=%s\n' % ('MJCS_DATABASE_URL',db_url))
-        f.write('%s=%s\n' % ('CASE_DETAILS_BUCKET',
+        """f.write('%s=%s\n' % ('CASE_DETAILS_BUCKET',
             get_export_val(exports,env_short,'CaseDetailsBucketName')))
         f.write('%s=%s\n' % ('SCRAPER_QUEUE_NAME',
             get_export_val(exports,env_short,'ScraperQueueName')))
@@ -92,7 +97,7 @@ def write_env_file(env_long, env_short, exports, db_name, username, password):
         f.write('%s=%s\n' % ('PARSER_FAILED_QUEUE_NAME',
             get_export_val(exports,env_short,'ParserFailedQueueName')))
         f.write('%s=%s\n' % ('PARSER_TRIGGER_ARN',
-            get_export_val(exports,env_short,'ParserTriggerArn')))
+            get_export_val(exports,env_short,'ParserTriggerArn')))"""
     # re-load config
     config.initialize_from_environment(env_long)
 
@@ -168,28 +173,27 @@ def run_scraper(args):
         on_error = lambda e,c: 'delete'
     elif args.prompt_on_error:
         on_error = scraper_prompt
-
-    scraper = Scraper(on_error, args.threads)
-
-    if args.invoke_lambda:
-        exports = get_stack_exports()
-        lambda_arn = get_export_val(exports, args.environment_short, 'ScraperArn')
-        boto3.client('lambda').invoke(
-            FunctionName = lambda_arn,
-            InvocationType = 'Event',
-            Payload = '{"invocation":"manual"}'
-        )
-        print("Invoked scraper Lambda function")
-    elif args.missing:
-        scraper.scrape_missing_cases()
-    elif args.queue:
-        scraper.scrape_from_scraper_queue()
-    elif args.failed_queue:
-        scraper.scrape_from_failed_queue()
-    elif args.case:
-        scraper.scrape_specific_case(args.case)
-    else:
-        raise Exception("Must specify --invoke-lambda, --missing, --queue, or --failed-queue.")
+    with shelve.open("Cases") as casebucket:
+        scraper = Scraper(on_error, args.threads, casebucket)
+        if args.invoke_lambda:
+            exports = get_stack_exports()
+            lambda_arn = get_export_val(exports, args.environment_short, 'ScraperArn')
+            boto3.client('lambda').invoke(
+                FunctionName = lambda_arn,
+                InvocationType = 'Event',
+                Payload = '{"invocation":"manual"}'
+            )
+            print("Invoked scraper Lambda function")
+        elif args.missing:
+            scraper.scrape_missing_cases()
+        elif args.queue:
+            scraper.scrape_from_scraper_queue()
+        elif args.failed_queue:
+            scraper.scrape_from_failed_queue()
+        elif args.case:
+            scraper.scrape_specific_case(args.case)
+        else:
+            raise Exception("Must specify --invoke-lambda, --missing, --queue, or --failed-queue.")
 
 def parser_prompt(exception, case_number):
     if type(exception) == NotImplementedError:
@@ -218,22 +222,18 @@ def run_parser(args):
         on_error = lambda e,c: 'delete'
     elif args.prompt_on_error:
         on_error = parser_prompt
-
-    parser = Parser(on_error, args.threads)
-
-    if args.failed_queue:
-        parser.parse_failed_queue(args.type)
-    elif args.invoke_lambda:
-        invoke_parser_lambda(args.type)
-    elif args.case:
-        parser.parse_case(args.case)
-    else:
-        parser.parse_unparsed_cases(args.type)
+    with shelve.open("Cases") as casebucket:
+        parser = Parser(on_error, args.threads, casebucket)
+        if args.failed_queue:
+            parser.parse_failed_queue(args.type)
+        elif args.invoke_lambda:
+            invoke_parser_lambda(args.type)
+        elif args.case:
+            parser.parse_case(args.case,casebucket)
+        else:
+            parser.parse_unparsed_cases(args.type)
 
 if __name__ == '__main__':
-    if len(sys.argv) == 2 and sys.argv[1] == 'db_init':
-        db_init()
-        sys.exit(0)
 
     parser = argparse.ArgumentParser(
         description="Run Case Harvester to spider, scrape, or parse cases from "
@@ -245,7 +245,7 @@ if __name__ == '__main__':
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument('--environment', '--env', default='development',
-        choices=['production','development'],
+        choices=['production', 'development'],
         help="Environment to run the case harvester in (e.g. production, development)")
     parser.add_argument('--profile', '-p', default='default',
         help="AWS named profile to use for credentials (see \
@@ -309,7 +309,6 @@ if __name__ == '__main__':
         help="Number of threads for parsing unparsed cases (default: 1)")
     parser_parser.add_argument('--case', '-c', help="Parse a specific case number")
     parser_parser.set_defaults(func=run_parser)
-
     if os.getenv('DEV_MODE'):
         parser_db = subparsers.add_parser('db_init', help="Database initialization")
         parser_db.add_argument('--db-name', required=True, help="Database name")

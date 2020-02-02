@@ -57,11 +57,12 @@ class ExpiredSession(Exception):
     pass
 
 class Scraper:
-    def __init__(self, on_error=None, threads=1, log_failed_scrapes=True, quiet=False):
+    def __init__(self, on_error=None, threads=1,casebucket=None, log_failed_scrapes=True, quiet=False):
         self.on_error = on_error
         self.threads = threads
         self.log_failed_scrapes = log_failed_scrapes
         self.quiet = quiet
+        self.case_bucket = casebucket
 
     def print_details(self, msg):
         if not self.quiet or os.getenv('VERBOSE'):
@@ -85,14 +86,11 @@ class Scraper:
             raise FailedScrapeNoCaseNumber
 
     def store_case_details(self, case_number, detail_loc, html, scrape_duration=None, check_before_store=True):
-        boto_session = boto3.session.Session(profile_name=config.aws_profile) # https://boto3.readthedocs.io/en/latest/guide/resources.html#multithreading-multiprocessing
-        s3 = boto_session.resource('s3')
-        case_details_bucket = s3.Bucket(config.CASE_DETAILS_BUCKET)
         if check_before_store:
             add = False
             try:
-                previous_fetch = case_details_bucket.Object(case_number).get()
-            except s3.meta.client.exceptions.NoSuchKey:
+                previous_fetch = self.case_bucket[case_number]
+            except KeyError:
                 self.print_details("Case details for %s not found, adding..." % case_number)
                 add = True
             else:
@@ -104,27 +102,15 @@ class Scraper:
 
         if add:
             timestamp = datetime.now()
-            obj = case_details_bucket.put_object(
-                Body = html,
-                Key = case_number,
-                Metadata = {
-                    'timestamp': timestamp.isoformat(),
-                    'detail_loc': detail_loc
-                }
-            )
-            while True: # during multithreading sometimes obj.version_id throws an exception
-                try:
-                    obj_version_id = obj.version_id
-                except:
-                    pass
-                else:
-                    break
+            ver = sha256(html.encode('utf-8')).hexdigest()
+            self.case_bucket[case_number] = {'Body': html, 'Metadata': {'timestamp': timestamp.isoformat(),'detail_loc': detail_loc,'version_id': ver}}
+            obj_version_id = self.case_bucket[case_number]['Metadata']['version_id']
             with db_session() as db:
                 scrape_version = ScrapeVersion(
                     s3_version_id = obj_version_id,
                     case_number = case_number,
                     length = len(html),
-                    sha256 = sha256(html.encode('utf-8')).hexdigest()
+                    sha256 = ver
                 )
                 scrape = Scrape(
                     case_number = case_number,

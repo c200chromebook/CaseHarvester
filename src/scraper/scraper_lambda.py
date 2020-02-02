@@ -68,8 +68,7 @@ def is_worker_running():
     return True
 
 def items_count():
-    config.scraper_queue.load() # refresh attributes
-    return config.scraper_queue.attributes['ApproximateNumberOfMessages']
+    return config.scraper_queue.qsize()
 
 def rescrape_date_range(days_ago_start, days_ago_end):
     # calculate date range
@@ -85,27 +84,9 @@ def rescrape_date_range(days_ago_start, days_ago_end):
             filter(Case.filing_date < date_end).\
             all()
 
-    def chunks(l, n):
-        for i in range(0, len(l), n):
-            yield l[i:i + n]
-
     # add cases to scraper queue
-    count = 0
-    for chunk in chunks(cases, 10):  # can only do 10 messages per batch request
-        count += len(chunk)
-        config.scraper_queue.send_messages(
-            Entries=[
-                {
-                    'Id': str(idx),
-                    'MessageBody': json.dumps({
-                        'case_number': case[0],
-                        'loc': case[1],
-                        'detail_loc': case[2]
-                    })
-                } for idx, case in enumerate(chunk)
-            ]
-        )
-    print(f'Submitted {count} cases for rescraping')
+    [config.scraper_queue.put({'case_number': case[0],'loc': case[1],'detail_loc': case[2]}) for idx, case in enumerate(cases)]
+    print(f'Submitted {len(cases)} cases for rescraping')
 
 def lambda_handler(event, context):
     if 'Records' not in event and 'invocation' not in event:

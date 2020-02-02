@@ -89,7 +89,7 @@ class Spider:
         else:
             if 'text/html' in response.headers['Content-Type'] \
                     and re.search(r'<span class="error">\s*<br>CaseSearch will only display results',response.text):
-                self.print_details("No cases for search string %s starting on %s" % (item.search_string,item.start_date.strftime("%-m/%-d/%Y")))
+                self.print_details("No cases for search string %s starting on %s" % (item.search_string,item.start_date.strftime("%m/%d/%Y")))
                 raise CompletedSearchNoResults
             elif 'text/html' in response.headers['Content-Type'] \
                     and re.search(r'<span class="error">\s*<br>Sorry, but your query has timed out after 2 minute',response.text):
@@ -104,14 +104,14 @@ class Spider:
         session = await self.session_pool.get()
         start_query = datetime.now()
 
-        self.print_details("Searching for %s on start date %s" % (item.search_string,item.start_date.strftime("%-m/%-d/%Y")))
+        self.print_details("Searching for %s on start date %s" % (item.search_string,item.start_date.strftime("%m/%d/%Y")))
         query_params = {
             'lastName':item.search_string,
             'countyName':item.court,
             'company':'N',
-            'filingStart':item.start_date.strftime("%-m/%-d/%Y") if item.end_date else None,
-            'filingEnd':item.end_date.strftime("%-m/%-d/%Y") if item.end_date else None,
-            'filingDate':item.start_date.strftime("%-m/%-d/%Y") if not item.end_date else None
+            'filingStart':item.start_date.strftime("%m/%d/%Y") if item.end_date else None,
+            'filingEnd':item.end_date.strftime("%m/%d/%Y") if item.end_date else None,
+            'filingDate':item.start_date.strftime("%m/%d/%Y") if not item.end_date else None
         }
         with db_session() as db:
             item = db.merge(item)
@@ -240,13 +240,7 @@ class Spider:
             run.queue_finished += 1
 
     def __add_to_scraper_queue(self, case_number, loc, detail_loc):
-        config.scraper_queue.send_message(
-            MessageBody = json.dumps({
-                'case_number': case_number,
-                'loc': loc,
-                'detail_loc': detail_loc
-            })
-        )
+        config.scraper_queue.put({'case_number': str(case_number),'loc': loc,'detail_loc': detail_loc})
 
     def __clear_queue(self, db):
         if active_count(db) and sys.stdin.isatty():

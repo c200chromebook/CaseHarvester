@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 import os
 import boto3
-
+import persistqueue
 class Config:
     def __getattr__(self, name):
         if self.__getattribute__('initialized') == False:
@@ -53,35 +53,25 @@ class Config:
         self.SCRAPER_QUEUE_ALARM_NAME = os.getenv('SCRAPER_QUEUE_ALARM_NAME')
         self.PARSER_FAILED_QUEUE_NAME = os.getenv('PARSER_FAILED_QUEUE_NAME')
         self.PARSER_TRIGGER_ARN = os.getenv('PARSER_TRIGGER_ARN')
+        self.scraper_queue = persistqueue.SQLiteQueue("ScrapeQueue")
+        self.scraper_failed_queue = persistqueue.SQLiteQueue("FailQueue")
+        self.db_engine = create_engine(self.MJCS_DATABASE_URL)
+        if self.aws_profile:
+            # Create custom boto3 session to use aws_profile
+            self.boto3_session = boto3.session.Session(profile_name=self.aws_profile)
 
-        if self.__getattribute__('MJCS_DATABASE_URL'):
-            self.db_engine = create_engine(self.MJCS_DATABASE_URL)
-
-        # Create custom boto3 session to use aws_profile
-        self.boto3_session = boto3.session.Session(profile_name=self.aws_profile)
-
-        # Generic boto3 resources/clients
-        self.sqs = self.boto3_session.resource('sqs')
-        self.dynamodb = self.boto3_session.resource('dynamodb')
-        self.s3 = self.boto3_session.resource('s3')
-        self.sns = self.boto3_session.resource('sns')
-        self.lambda_ = self.boto3_session.client('lambda')
-
-        # Specific AWS objects
-        if self.__getattribute__('CASE_DETAILS_BUCKET'):
-            self.case_details_bucket = self.s3.Bucket(self.CASE_DETAILS_BUCKET)
-        if self.__getattribute__('SCRAPER_QUEUE_NAME'):
-            self.scraper_queue = self.sqs.get_queue_by_name(QueueName=self.SCRAPER_QUEUE_NAME)
-        if self.__getattribute__('SCRAPER_DYNAMODB_TABLE_NAME'):
-            self.scraper_table = self.dynamodb.Table(self.SCRAPER_DYNAMODB_TABLE_NAME)
-        if self.__getattribute__('SCRAPER_FAILED_QUEUE_NAME'):
-            self.scraper_failed_queue = self.sqs.get_queue_by_name(QueueName=self.SCRAPER_FAILED_QUEUE_NAME)
-        if self.__getattribute__('PARSER_TRIGGER_ARN'):
-            self.parser_trigger = self.sns.Topic(self.PARSER_TRIGGER_ARN)
-        if self.__getattribute__('PARSER_FAILED_QUEUE_NAME'):
-            self.parser_failed_queue = self.sqs.get_queue_by_name(QueueName=self.PARSER_FAILED_QUEUE_NAME)
-        if self.__getattribute__('SPIDER_QUEUE_NAME'):
-            self.spider_queue = self.sqs.get_queue_by_name(QueueName=self.SPIDER_QUEUE_NAME)
+            # Generic boto3 resources/clients
+            self.sqs = self.boto3_session.resource('sqs')
+            self.dynamodb = self.boto3_session.resource('dynamodb')
+            self.s3 = self.boto3_session.resource('s3')
+            self.sns = self.boto3_session.resource('sns')
+            self.lambda_ = self.boto3_session.client('lambda')
+            if self.__getattribute__('PARSER_TRIGGER_ARN'):
+                self.parser_trigger = self.sns.Topic(self.PARSER_TRIGGER_ARN)
+            if self.__getattribute__('PARSER_FAILED_QUEUE_NAME'):
+                self.parser_failed_queue = self.sqs.get_queue_by_name(QueueName=self.PARSER_FAILED_QUEUE_NAME)
+            if self.__getattribute__('SPIDER_QUEUE_NAME'):
+                self.spider_queue = self.sqs.get_queue_by_name(QueueName=self.SPIDER_QUEUE_NAME)
 
         self.initialized = True
 
