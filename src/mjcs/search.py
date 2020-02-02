@@ -43,18 +43,20 @@ def split_date_range(start_date, end_date):
     return range1, range2
 
 class SearchItem(BaseSearchItem):
-    def __init__(self, search_string, start_date, end_date=None, court=None, status=SearchItemStatus.new):
-        id = search_string + start_date.strftime("%m/%d/%Y")
+    def __init__(self, first_name, last_name, start_date, end_date=None, court=None,site=None,status=SearchItemStatus.new):
+        id = first_name + "&" + last_name + start_date.strftime("%m/%d/%Y")
         if end_date:
             id += end_date.strftime("%m/%d/%Y")
         if court:
             id += court
         super().__init__(
             id=id,
-            search_string=search_string,
+            first_name=first_name,
+            last_name=last_name,
             start_date=start_date,
             end_date=end_date,
             court=court,
+            site=site,
             status=status,
             timeouts = 0,
             err500s = 0
@@ -63,10 +65,12 @@ class SearchItem(BaseSearchItem):
     def dict(self):
         return {
             'id': self.id,
-            'search_string': self.search_string,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
             'start_date': self.start_date,
             'end_date': self.end_date,
             'court': self.court,
+            'site': self.site,
             'status': self.status,
             'timeouts': self.timeouts,
             'err500s': self.err500s,
@@ -88,21 +92,25 @@ class SearchItem(BaseSearchItem):
         # For timeouts, split the date range in half and add both to queue
         if self.end_date:
             range1, range2 = split_date_range(self.start_date, self.end_date)
-            print("Appending %s from %s to %s" % (self.search_string, range1[0], range1[1]))
+            print("Appending %s & %s from %s to %s" % (self.first_name, self.last_name, range1[0], range1[1]))
             db.merge(SearchItem(
-                search_string = self.search_string,
-                start_date = range1[0],
-                end_date = range1[1],
-                court = self.court,
-                status = SearchItemStatus.new
+                first_name=self.first_name,
+                last_name=self.last_name,
+                start_date=range1[0],
+                end_date=range1[1],
+                court=self.court,
+                site=self.site,
+                status=SearchItemStatus.new
             ))
-            print("Appending %s from %s to %s" % (self.search_string, range2[0], range2[1]))
+            print("Appending %s %s from %s to %s" % (self.first_name, self.last_name, range2[0], range2[1]))
             db.merge(SearchItem(
-                search_string = self.search_string,
-                start_date = range2[0],
-                end_date = range2[1],
-                court = self.court,
-                status = SearchItemStatus.new
+                first_name=self.first_name,
+                last_name=self.last_name,
+                start_date=range2[0],
+                end_date=range2[1],
+                court=self.court,
+                site=self.site,
+                status=SearchItemStatus.new
             ))
             self.status = SearchItemStatus.timeout_split
         else:

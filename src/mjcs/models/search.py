@@ -35,11 +35,14 @@ class BaseSearchItem(TableBase):
     __tablename__ = 'queue'
 
     id = Column(String, primary_key=True)
-    search_string = Column(String)
+    first_name = Column(String)
+    last_name = Column(String)
     start_date = Column(Date)
     end_date = Column(Date, nullable=True)
     court = Column(String, nullable=True)
+    site = Column(String, nullable=True)
     status = Column(String, default=SearchItemStatus.new)
     timeouts = Column(Integer, default=0)
     err500s = Column(Integer, default=0)
     errunknown = Column(String, nullable=True)
+

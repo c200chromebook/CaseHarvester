@@ -7,7 +7,7 @@ from .session import AsyncSession
 import trio
 import asks
 from sqlalchemy.dialects.postgresql import insert
-from bs4 import BeautifulSoup, SoupStrainer
+from bs4 import BeautifulSoup
 from datetime import *
 import re
 import sys
@@ -46,12 +46,8 @@ class CompletedSearchNoResults(Exception):
 class Spider:
     '''Main spider class'''
 
-    # searching for underscore character leads to timeout for some reason
-    # % is a wildcard character
-    __search_chars = string.ascii_uppercase \
-        + string.digits \
-        + string.punctuation.replace('_','').replace('%','') \
-        + ' '
+    # Restrict to humans is OK for my purposes. Humans can have ticks in their names.
+    __search_chars = string.ascii_uppercase + '\''
 
     def print_details(self, msg):
         if not self.quiet or os.getenv('VERBOSE'):
@@ -89,7 +85,7 @@ class Spider:
         else:
             if 'text/html' in response.headers['Content-Type'] \
                     and re.search(r'<span class="error">\s*<br>CaseSearch will only display results',response.text):
-                self.print_details("No cases for search string %s starting on %s" % (item.search_string,item.start_date.strftime("%m/%d/%Y")))
+                self.print_details("No cases for search string %s %s starting on %s" % (item.first_name, item.last_name, item.start_date.strftime("%m/%d/%Y")))
                 raise CompletedSearchNoResults
             elif 'text/html' in response.headers['Content-Type'] \
                     and re.search(r'<span class="error">\s*<br>Sorry, but your query has timed out after 2 minute',response.text):
@@ -104,10 +100,13 @@ class Spider:
         session = await self.session_pool.get()
         start_query = datetime.now()
 
-        self.print_details("Searching for %s on start date %s" % (item.search_string,item.start_date.strftime("%m/%d/%Y")))
+        self.print_details("Searching for %s & %s on start date %s" % (item.first_name,item.last_name,item.start_date.strftime("%m/%d/%Y")))
         query_params = {
-            'lastName':item.search_string,
+            'lastName':item.last_name,
+            'firstName': item.first_name,
             'countyName':item.court,
+            'site':item.site,
+            'partyType': 'DEF', #Assume all cases have a defendant, reduce clutter
             'company':'N',
             'filingStart':item.start_date.strftime("%m/%d/%Y") if item.end_date else None,
             'filingEnd':item.end_date.strftime("%m/%d/%Y") if item.end_date else None,
@@ -166,7 +165,7 @@ class Spider:
 
             query_time = (datetime.now() - start_query).total_seconds()
             self.session_pool.put_nowait(session)
-            self.print_details("Search string %s returned %d items, took %d seconds" % (item.search_string, len(results), query_time))
+            self.print_details("Search string %s & %s returned %d items, took %d seconds" % (item.first_name, item.last_name, len(results), query_time))
 
             processed_cases = []
             for result in results:
@@ -219,20 +218,28 @@ class Spider:
 
             if hit_limit:
                 # trailing spaces are trimmed, so <searh_string + ' '> will return same results as <search_string>.
-                for char in self.__search_chars.replace(' ',''):
+
+                for char in self.__search_chars:
+                    last_name_longer = len(item.first_name.replace(' ', '')) < len(item.last_name.replace(' ', ''))
+                    fname_append = char if last_name_longer else ''
+                    lname_append = '' if last_name_longer else char
                     self.__upsert_search_item(db, SearchItem(
-                        search_string = item.search_string + char,
-                        start_date = item.start_date,
-                        end_date = item.end_date,
-                        court = item.court,
-                        status = SearchItemStatus.new
+                        first_name=item.first_name + fname_append,
+                        last_name=item.last_name + lname_append,
+                        start_date=item.start_date,
+                        end_date=item.end_date,
+                        court=item.court,
+                        site=item.site,
+                        status=SearchItemStatus.new
                     ))
                     self.__upsert_search_item(db, SearchItem(
-                        search_string = item.search_string + ' ' + char,
-                        start_date = item.start_date,
-                        end_date = item.end_date,
-                        court = item.court,
-                        status = SearchItemStatus.new
+                        first_name=item.first_name + ' ' + fname_append,
+                        last_name=item.last_name + ' ' + lname_append,
+                        start_date=item.start_date,
+                        end_date=item.end_date,
+                        court=item.court,
+                        site=item.site,
+                        status=SearchItemStatus.new
                     ))
 
             item.handle_complete(db, len(results), start_query, query_time)
@@ -258,7 +265,7 @@ class Spider:
                 )
         )
 
-    def __seed_queue(self, db, start_date, end_date=None, court=None):
+    def __seed_queue(self, db, start_date, end_date=None, court=None, site=None):
         print("Seeding queue")
         if end_date:
             def gen_timeranges(start_date, end_date):
@@ -271,20 +278,23 @@ class Spider:
                         end = None
                     yield (start,end)
             for (start,end) in gen_timeranges(start_date, end_date):
-                for char in self.__search_chars.replace(' ',''): # don't start queries with a space
+                for char in self.__search_chars: # don't start queries with a space
                     self.__upsert_search_item(db, SearchItem(
-                        search_string = char,
-                        start_date = start,
-                        end_date = end,
-                        court = court
+                        last_name=char,
+                        first_name='',
+                        start_date=start,
+                        end_date=end,
+                        site=site,
+                        court=court
                     ))
         else:
-            for char in self.__search_chars.replace(' ',''): # don't start queries with a space
+            for char in self.__search_chars: # don't start queries with a space
                 self.__upsert_search_item(db, SearchItem(
-                    search_string = char,
+                    last_name = char,
                     start_date = start_date,
                     end_date = None,
-                    court = court
+                    site=site,
+                    court=court
                 ))
         print("Finished seeding queue")
 
@@ -313,7 +323,7 @@ class Spider:
                 with db_session() as db:
                     nitems = failed_count(db) if run.retry_failed else active_count(db)
 
-    def __run(self, start_date=None, end_date=None, court=None, retry_failed=False):
+    def __run(self, start_date=None, end_date=None, court=None,site=None,retry_failed=False):
         print("Starting run")
         with db_session() as db:
             run = Run(
@@ -321,6 +331,7 @@ class Spider:
                 start_date = start_date,
                 end_date = end_date,
                 court = court,
+                site=site,
                 overwrite=self.overwrite,
                 force_scrape=self.force_scrape,
                 retry_failed=retry_failed
@@ -335,11 +346,11 @@ class Spider:
                 db.commit()
         print("Spider run complete")
 
-    def search(self, start_date, end_date=None, court=None):
+    def search(self, start_date, end_date=None, court=None, site=None):
         with db_session() as db:
             self.__clear_queue(db)
-            self.__seed_queue(db, start_date, end_date, court)
-        self.__run(start_date, end_date, court)
+            self.__seed_queue(db, start_date, end_date, court, site)
+        self.__run(start_date, end_date, court, site)
 
     def resume(self):
         with db_session() as db:
