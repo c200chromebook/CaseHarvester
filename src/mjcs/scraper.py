@@ -5,14 +5,15 @@ from .session import Session
 from .util import (db_session, fetch_from_queue, NoItemsInQueue, cases_batch,
                    cases_batch_filter, process_cases, get_detail_loc)
 from .models import ScrapeVersion, Scrape, Case
-from sqlalchemy import and_
+from sqlalchemy import and_,not_
 from hashlib import sha256
 import requests
 import boto3
 import re
 import json
 import os
-from datetime import *
+from datetime import datetime
+import time
 from queue import Queue
 import concurrent.futures
 
@@ -160,10 +161,9 @@ class Scraper:
                     raise FailedScrapeUnknownError
         elif re.search(r'<span class="error">\s*<br>CaseSearch will only display results',response.text):
             scraper_item.errors += 1
-            if scraper_item.errors >= config.QUERY_ERROR_LIMIT:
-                self.log_failed_scrape(scraper_item.case_number,
-                    scraper_item.detail_loc, "Case details not found")
-                raise FailedScrapeNotFound
+            #no need to hammer this one, if it shows up once, it will not be remediated.
+            self.log_failed_scrape(scraper_item.case_number,scraper_item.detail_loc, "Case details not found")
+            raise FailedScrapeNotFound
         elif 'Sorry, but your query has timed out after 2 minute' in response.text:
             scraper_item.timeouts += 1
             if scraper_item.timeouts >= config.QUERY_TIMEOUTS_LIMIT:
@@ -176,10 +176,9 @@ class Scraper:
                 self.check_scrape_sanity(scraper_item.case_number, response.text)
             except FailedScrape as e:
                 scraper_item.errors += 1
-                if scraper_item.errors >= config.QUERY_ERROR_LIMIT:
-                    self.log_failed_scrape(scraper_item.case_number, scraper_item.detail_loc,
-                        str(type(e)))
-                    raise e
+                #If it gets here, it will not be helped by rerunning.
+                self.log_failed_scrape(scraper_item.case_number, scraper_item.detail_loc,str(type(e)))
+                raise e
             else:
                 self.store_case_details(scraper_item.case_number, scraper_item.detail_loc, response.text, scrape_duration, check_before_store)
                 raise CompletedScrape
@@ -202,6 +201,7 @@ class Scraper:
                 end = datetime.now()
                 duration = (begin - end).total_seconds()
             except requests.exceptions.Timeout:
+                time.sleep(0.1) # courtesy
                 scraper_item.timeouts += 1
                 if scraper_item.timeouts >= config.QUERY_TIMEOUTS_LIMIT:
                     self.log_failed_scrape(case_number, detail_loc, "Reached timeout limit")
@@ -217,6 +217,7 @@ class Scraper:
                     break
                 except Exception as e:
                     e.html = response.text
+                    time.sleep(1) #anti hammer
                     raise e
 
     def scrape_specific_case(self, case_number):
@@ -306,12 +307,12 @@ class Scraper:
 
     def scrape_missing_cases(self):
         session_pool = Queue(self.threads)
-        fails = self.fail_bucket.keys()
+        fails = list(self.fail_bucket.keys())
         for i in range(self.threads):
             session = Session()
             session.renew() # Renew session immediately bc it was causing errors in Lambda
             session_pool.put_nowait(session)
-        filter = and_(Case.last_scrape == None, Case.scrape_exempt != True,Case.case_number not in fails)
+        filter = and_(Case.last_scrape == None, Case.scrape_exempt != True,Case.case_number.notin_(fails))
         with db_session() as db:
             print('Getting count of unscraped cases...',end='',flush=True)
             counter = {
