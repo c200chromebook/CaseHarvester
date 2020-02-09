@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import shelve
+import sqlitedict
 from mjcs.config import config
 from mjcs.models import Case
 from mjcs.models.common import TableBase
@@ -173,7 +173,7 @@ def run_scraper(args):
         on_error = lambda e,c: 'delete'
     elif args.prompt_on_error:
         on_error = scraper_prompt
-    with shelve.open("Cases") as casebucket:
+    with sqlitedict.open("compressed") as casebucket:
         scraper = Scraper(on_error, args.threads, casebucket)
         if args.invoke_lambda:
             exports = get_stack_exports()
@@ -222,7 +222,7 @@ def run_parser(args):
         on_error = lambda e,c: 'delete'
     elif args.prompt_on_error:
         on_error = parser_prompt
-    with shelve.open("Cases") as casebucket:
+    with sqlitedict.open("compressed") as casebucket:
         parser = Parser(on_error, args.threads, casebucket)
         if args.failed_queue:
             parser.parse_failed_queue(args.type)
@@ -290,7 +290,7 @@ if __name__ == '__main__':
         "Scrape cases in the queue of failed cases")
     parser_scraper.add_argument('--invoke-lambda', action='store_true',
         help="Invoke scraper lambda function")
-    parser_scraper.add_argument('--threads', type=int, default=1,
+    parser_scraper.add_argument('--threads', type=int, default=3,
         help="Number of threads (default: 1)")
     parser_scraper.add_argument('--case', '-c', help="Scrape specific case number")
     parser_scraper.set_defaults(func=run_scraper)

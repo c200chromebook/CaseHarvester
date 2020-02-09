@@ -232,15 +232,16 @@ class Spider:
                         site=item.site,
                         status=SearchItemStatus.new
                     ))
-                    self.__upsert_search_item(db, SearchItem(
-                        first_name=item.first_name + ' ' + fname_append,
-                        last_name=item.last_name + ' ' + lname_append,
-                        start_date=item.start_date,
-                        end_date=item.end_date,
-                        court=item.court,
-                        site=item.site,
-                        status=SearchItemStatus.new
-                    ))
+                    if item.first_name != '':
+                        self.__upsert_search_item(db, SearchItem(
+                            first_name=item.first_name + ' ' + fname_append,
+                            last_name=item.last_name + ' ' + lname_append,
+                            start_date=item.start_date,
+                            end_date=item.end_date,
+                            court=item.court,
+                            site=item.site,
+                            status=SearchItemStatus.new
+                        ))
 
             item.handle_complete(db, len(results), start_query, query_time)
             run.results_processed += len(results)
@@ -291,6 +292,7 @@ class Spider:
             for char in self.__search_chars: # don't start queries with a space
                 self.__upsert_search_item(db, SearchItem(
                     last_name = char,
+                    first_name = '',
                     start_date = start_date,
                     end_date = None,
                     site=site,

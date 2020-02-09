@@ -1,3 +1,5 @@
+import gzip
+
 from .config import config
 from .session import Session
 from .util import (db_session, fetch_from_queue, NoItemsInQueue, cases_batch,
@@ -94,7 +96,7 @@ class Scraper:
                 self.print_details("Case details for %s not found, adding..." % case_number)
                 add = True
             else:
-                if previous_fetch['Body'].read().decode('utf-8') != html:
+                if gzip.decompress(previous_fetch['Body']).decode() != html:
                     self.print_details("Found new version of case %s, replacing..." % case_number)
                     add = True
         else:
@@ -103,8 +105,10 @@ class Scraper:
         if add:
             timestamp = datetime.now()
             ver = sha256(html.encode('utf-8')).hexdigest()
-            self.case_bucket[case_number] = {'Body': html, 'Metadata': {'timestamp': timestamp.isoformat(),'detail_loc': detail_loc,'version_id': ver}}
-            obj_version_id = self.case_bucket[case_number]['Metadata']['version_id']
+            case = {'Body': gzip.compress(html.encode()), 'Metadata': {'timestamp': timestamp.isoformat(), 'detail_loc': detail_loc, 'version_id': ver}}
+            self.case_bucket[case_number] = case
+            self.case_bucket.commit()
+            obj_version_id = case['Metadata']['version_id']+str(timestamp)
             with db_session() as db:
                 scrape_version = ScrapeVersion(
                     s3_version_id = obj_version_id,

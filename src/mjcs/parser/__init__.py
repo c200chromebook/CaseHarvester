@@ -1,3 +1,5 @@
+import gzip
+
 from ..config import config
 from ..util import fetch_from_queue, NoItemsInQueue, db_session, cases_batch_filter, get_detail_loc, process_cases
 from ..models import Case
@@ -41,7 +43,7 @@ def parse_case(case,casebucket):
         if db.query(Case.parse_exempt).filter(Case.case_number == case_number).scalar() == True:
             return
     case_details = casebucket[case_number]
-    case_html = case_details['Body']
+    case_html = gzip.decompress(case_details['Body']).decode()
     try:
         detail_loc = case_details['Metadata']['detail_loc']
     except KeyError:
