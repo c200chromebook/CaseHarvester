@@ -59,12 +59,13 @@ class ExpiredSession(Exception):
     pass
 
 class Scraper:
-    def __init__(self, on_error=None, threads=1,casebucket=None, log_failed_scrapes=True, quiet=False):
+    def __init__(self, on_error=None, threads=1,casebucket=None, log_failed_scrapes=True, quiet=False,failbucket=None):
         self.on_error = on_error
         self.threads = threads
         self.log_failed_scrapes = log_failed_scrapes
         self.quiet = quiet
         self.case_bucket = casebucket
+        self.fail_bucket = failbucket
 
     def print_details(self, msg):
         if not self.quiet or os.getenv('VERBOSE'):
@@ -134,12 +135,8 @@ class Scraper:
     def log_failed_scrape(self, case_number, detail_loc, error):
         self.print_details("Failed to scrape case %s: %s" % (case_number, error))
         if self.log_failed_scrapes:
-            config.scraper_failed_queue.send_message(
-                MessageBody = json.dumps({
-                    'case_number': case_number,
-                    'detail_loc': detail_loc
-                })
-            )
+            self.fail_bucket[case_number] = error
+            self.fail_bucket.commit()
 
     def handle_scrape_response(self, scraper_item, response, scrape_duration, check_before_store=True):
         if response.status_code != 200:
@@ -309,12 +306,12 @@ class Scraper:
 
     def scrape_missing_cases(self):
         session_pool = Queue(self.threads)
+        fails = self.fail_bucket.keys()
         for i in range(self.threads):
             session = Session()
             session.renew() # Renew session immediately bc it was causing errors in Lambda
             session_pool.put_nowait(session)
-
-        filter = and_(Case.last_scrape == None, Case.scrape_exempt != True)
+        filter = and_(Case.last_scrape == None, Case.scrape_exempt != True,Case.case_number not in fails)
         with db_session() as db:
             print('Getting count of unscraped cases...',end='',flush=True)
             counter = {

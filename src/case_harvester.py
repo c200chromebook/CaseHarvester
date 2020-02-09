@@ -170,11 +170,11 @@ def scraper_prompt(exception, case_number):
 def run_scraper(args):
     on_error = None
     if args.ignore_errors:
-        on_error = lambda e,c: 'delete'
+        on_error = lambda e, c: 'delete'
     elif args.prompt_on_error:
         on_error = scraper_prompt
-    with sqlitedict.open("compressed") as casebucket:
-        scraper = Scraper(on_error, args.threads, casebucket)
+    with sqlitedict.open("compressed") as casebucket, sqlitedict.open("fails") as failbucket:
+        scraper = Scraper(on_error, args.threads, casebucket, failbucket=failbucket)
         if args.invoke_lambda:
             exports = get_stack_exports()
             lambda_arn = get_export_val(exports, args.environment_short, 'ScraperArn')
